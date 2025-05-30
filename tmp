@@ -1,0 +1,153 @@
+/*
+BCFerries Reservation Exchange
+
+A mobile-first responsive Next.js + Firebase app with:
+- Google & Facebook Authentication
+- Firestore for listings
+- Cloud Functions for matching + email notifications
+
+Supported routes:
+- Horseshoe Bay ⇄ Langdale
+- Horseshoe Bay ⇄ Nanaimo
+- Comox ⇄ Powell River
+
+----------------------------
+📁 Project Structure
+
+/bcferries-exchange
+├── functions                 ← Firebase Cloud Functions
+│   ├── index.js              ← Firestore trigger for matching + email
+│   └── package.json
+├── pages
+│   ├── _app.js
+│   ├── api
+│   │   └── reservations.js   ← optional API wrapper
+│   ├── index.js              ← feed of all listings
+│   ├── post.js               ← "For Sale" form
+│   └── iso.js                ← "ISO" form
+├── components
+│   ├── Layout.js
+│   └── ReservationForm.js    ← handles both sale/ISO posts
+├── lib
+│   └── routes.js             ← pre‑populated route/time data
+├── firebase.js               ← init Auth & Firestore
+├── tailwind.config.js
+├── postcss.config.js
+├── next.config.js
+├── vercel.json               ← config for Vercel deployment
+├── package.json
+└── README.md
+
+----------------------------
+📖 README.md (excerpt)
+
+# Setup
+1. Clone repo
+2. `npm install`
+3. Copy `.env.local.example` to `.env.local` and set:
+   - NEXT_PUBLIC_FIREBASE_... (your Firebase config)
+   - SENDGRID_API_KEY (for email notifications)
+   - FROM_EMAIL (verified sender)
+4. `npm run dev` to start Next.js locally
+
+# Firebase Functions
+1. `cd functions && npm install`
+2. Set env:
+   ```bash
+   firebase functions:config:set sendgrid.key="$SENDGRID_API_KEY" sendgrid.from="$FROM_EMAIL"
+   ```
+3. `firebase deploy --only functions`
+
+# Vercel Deployment
+1. Push code to GitHub
+2. In Vercel dashboard create a new project from GitHub
+3. Add environment variables in Vercel settings:
+   - NEXT_PUBLIC_FIREBASE_API_KEY, AUTH_DOMAIN, PROJECT_ID, etc.
+   - SENDGRID_API_KEY, FROM_EMAIL
+4. Deploy (Vercel handles build & route rewrites via `vercel.json`)
+
+----------------------------
+/functions/index.js
+
+const functions = require('firebase-functions');
+const admin = require('firebase-admin');
+const sgMail = require('@sendgrid/mail');
+admin.initializeApp();
+sgMail.setApiKey(functions.config().sendgrid.key);
+
+exports.matchReservations = functions.firestore
+  .document('reservations/{resId}')
+  .onCreate(async (snap, context) => {
+    const newRes = snap.data();
+    const { type, routeId, date, time, price, userEmail } = newRes;
+    if (!userEmail) return null;
+    const opposite = type === 'sell' ? 'iso' : 'sell';
+    const db = admin.firestore();
+
+    const matches = await db.collection('reservations')
+      .where('type', '==', opposite)
+      .where('routeId', '==', routeId)
+      .where('date', '==', date)
+      .where('time', '==', time)
+      .orderBy('createdAt')
+      .limit(1)
+      .get();
+
+    if (matches.empty) return null;
+
+    const matchDoc = matches.docs[0];
+    const match = matchDoc.data();
+    if (!match.userEmail) return null;
+
+    const msg = {
+      to: [userEmail, match.userEmail],
+      from: functions.config().sendgrid.from,
+      subject: 'BC Ferries Reservation Match! 🚢',
+      text: `You and another user have matching ${type === 'sell' ? 'buyer' : 'seller'}/${opposite} reservations:\n\nRoute: ${routeId}\nDate: ${date} at ${time}\nPrice: $${price}\n\nPlease reach out to each other to complete the exchange.`
+    };
+    await sgMail.send(msg);
+
+    await snap.ref.update({ matched: true });
+    await matchDoc.ref.update({ matched: true });
+    return null;
+  });
+
+/functions/package.json
+
+{
+  "dependencies": {
+    "firebase-admin": "latest",
+    "firebase-functions": "latest",
+    "@sendgrid/mail": "latest"
+  }
+}
+
+/vercel.json
+
+{
+  "rewrites": [
+    { "source": "/api/(.*)", "destination": "/api/$1" },
+    { "source": "/(.*)", "destination": "/$1" }
+  ]
+}
+
+----------------------------
+/components/ReservationForm.js (snippet)
+
+import { auth } from '../firebase';
+import { serverTimestamp } from 'firebase/firestore';
+
+// include userEmail when posting
+const user = auth.currentUser;
+if (!user || !user.email) {
+  alert('You must be logged in with a valid email to post');
+  return;
+}
+
+const data = {
+  // fill in remaining fields appropriately in your app
+  userId: user.uid,
+  userEmail: user.email,
+  createdAt: serverTimestamp()
+};
+*/
